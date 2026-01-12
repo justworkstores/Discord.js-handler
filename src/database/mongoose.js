@@ -9,12 +9,13 @@ export default async function connectDatabase() {
   }
   mongoose.set('strictQuery', false);
   try {
-    await mongoose.connect(uri, {
-      keepAlive: true,
-      connectTimeoutMS: 10000
-    });
+    await mongoose.connect(uri, { keepAlive: true, connectTimeoutMS: 10000 });
     logger.info('Connected to MongoDB.');
   } catch (err) {
-    logger.error('Failed to connect to MongoDB:', err);
+    logger.error({ err }, 'Failed to connect to MongoDB');
   }
+}
+
+export async function disconnect() {
+  return mongoose.disconnect();
 }

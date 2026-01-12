@@ -1,41 +1,40 @@
-const fs = require('fs').promises;
-const path = require('path');
-const logger = require('../utils/logger');
+import { fileURLToPath } from 'url';
+import path from 'path';
+import fs from 'fs/promises';
+import logger from '../utils/logger.js';
+import { client } from './_sharedClient.js';
 
-module.exports = async (client) => {
-  const eventsPath = path.join(__dirname, '..', 'events');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+async function loadEvents(dir = path.join(__dirname, '..', 'events')) {
   try {
-    const files = await fs.readdir(eventsPath);
-    const jsFiles = files.filter(f => f.endsWith('.js'));
-
-    await Promise.all(jsFiles.map(async file => {
-      const filePath = path.join(eventsPath, file);
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const sub = await fs.readdir(path.join(dir, entry.name), { withFileTypes: true });
+        for (const s of sub) if (s.name.endsWith('.js')) files.push(path.join(dir, entry.name, s.name));
+      } else if (entry.name.endsWith('.js')) files.push(path.join(dir, entry.name));
+    }
+    await Promise.all(files.map(async full => {
       try {
-        const event = require(filePath);
-        if (!event || !event.name || !event.execute) {
-          logger.warn({ file }, 'Event file missing expected exports (name, execute)');
+        const mod = await import(full);
+        const evt = mod.default || mod;
+        if (!evt || !evt.name || !evt.execute) {
+          logger.warn(`Skipping invalid event file: ${full}`);
           return;
         }
-
-        if (event.once) {
-          client.once(event.name, (...args) => event.execute(...args, client));
-        } else {
-          client.on(event.name, (...args) => event.execute(...args, client));
-        }
-
-        logger.debug({ file, event: event.name }, 'Registered event');
+        if (evt.once) client.once(evt.name, (...args) => evt.execute(client, ...args));
+        else client.on(evt.name, (...args) => evt.execute(client, ...args));
+        logger.info(`Bound event ${evt.name}`);
       } catch (err) {
-        logger.error({ file, err }, 'Failed to load event file');
-        throw err;
+        logger.error(`Failed to load event ${full}:`, err);
       }
     }));
-
-    logger.info({ count: jsFiles.length }, 'Loaded events');
   } catch (err) {
-    if (err.code === 'ENOENT') {
-      logger.warn('No events directory found - skipping event loading');
-      return;
-    }
-    throw err;
+    logger.debug('No events directory or failed to read events:', err.message);
   }
-};
+}
+
+await loadEvents();

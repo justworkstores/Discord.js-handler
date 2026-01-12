@@ -1,110 +1,76 @@
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
-const mongoose = require('mongoose');
-const fs = require('fs').promises;
-const path = require('path');
-const logger = require('./utils/logger');
+import 'dotenv/config';
+import { Client, Collection, GatewayIntentBits } from 'discord.js';
+import { fileURLToPath } from 'url';
+import path from 'path';
+import fs from 'fs/promises';
+import connectDatabase from './database/mongoose.js';
+import logger from './utils/logger.js';
+import { initCooldownStore } from './storage/cooldownStore.js';
 
-// Create client with some reasonable defaults. Adjust intents as needed for your bot.
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
-  ],
-  partials: [Partials.Channel]
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Minimal intents for slash-only + component interactions
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+// Expose client to handler modules
+globalThis.__client = client;
+
+client.commands = new Collection();
+client.commandAliases = new Collection();
+client.cooldowns = new Collection();
+client.buttons = new Collection();
+client.selects = new Collection();
+client.modals = new Collection();
+
+let cooldownStore;
+
+// Global error handlers & graceful shutdown
+process.on('unhandledRejection', (err) => logger.error({ err }, 'Unhandled Rejection'));
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'Uncaught Exception');
+  process.exit(1);
 });
 
-async function loadHandlers() {
-  const handlersPath = path.join(__dirname, 'handlers');
-
-  // We expect handler modules: commandHandler.js, eventHandler.js, interactionHandler.js
-  const files = await fs.readdir(handlersPath);
-  const handlerFiles = files.filter(f => f.endsWith('.js'));
-
-  await Promise.all(handlerFiles.map(async file => {
-    const modPath = path.join(handlersPath, file);
-    try {
-      const handler = require(modPath);
-      if (typeof handler === 'function') {
-        await handler(client);
-        logger.info({ handler: file }, 'Loaded handler');
-      } else {
-        logger.warn({ handler: file }, 'Handler module did not export a function');
-      }
-    } catch (err) {
-      logger.error({ handler: file, err }, 'Failed to load handler');
-      throw err;
-    }
-  }));
-}
-
-async function connectDatabase() {
-  const mongoUri = process.env.MONGO_URI;
-  if (!mongoUri) {
-    logger.warn('MONGO_URI not provided - skipping database connection');
-    return;
-  }
-
-  try {
-    await mongoose.connect(mongoUri, {
-      // Options default in modern mongoose versions; add if needed
-    });
-    logger.info('Connected to MongoDB');
-  } catch (err) {
-    logger.error(err, 'Failed to connect to MongoDB');
-    throw err;
-  }
-}
-
 async function shutdown(signal) {
+  logger.info(`Shutting down (signal=${signal})`);
   try {
-    logger.info({ signal }, 'Graceful shutdown initiated');
-    if (client && client.isReady()) {
-      await client.destroy();
-      logger.info('Discord client destroyed');
-    }
-    if (mongoose.connection.readyState === 1) {
-      await mongoose.disconnect();
-      logger.info('MongoDB disconnected');
-    }
-    process.exit(0);
+    await client.destroy();
+    await import('./database/mongoose.js').then(m => m.disconnect && m.disconnect());
   } catch (err) {
-    logger.error(err, 'Error during shutdown');
-    process.exit(1);
+    logger.error({ err }, 'Error during shutdown');
+  } finally {
+    process.exit(0);
   }
 }
-
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error({ reason }, 'Unhandled Rejection at Promise');
-});
-
-process.on('uncaughtException', err => {
-  logger.fatal(err, 'Uncaught Exception');
-  // If possible, try to shut down gracefully
-  shutdown('uncaughtException');
-});
+async function loadHandlers() {
+  const handlersDir = path.join(__dirname, 'handlers');
+  try {
+    const files = await fs.readdir(handlersDir);
+    // import all handler modules concurrently
+    await Promise.all(files.filter(f => f.endsWith('.js')).map(f => import(path.join(handlersDir, f))));
+    logger.info('Loaded handler modules');
+  } catch (err) {
+    logger.warn('No handlers loaded or handlers dir missing:', err.message);
+  }
+}
 
 (async () => {
   try {
+    cooldownStore = await initCooldownStore();
     await connectDatabase();
     await loadHandlers();
 
-    const token = process.env.TOKEN;
-    if (!token) {
-      logger.error('TOKEN environment variable is required to login');
-      process.exit(1);
-    }
+    // load commands, events, interactions (handlers will populate client collections)
+    // For back-compat, handlers like commandHandler.js will run on import
 
-    await client.login(token);
-    logger.info('Client logged in');
+    await client.login(process.env.TOKEN);
+    logger.info(`Logged in as ${client.user.tag}`);
   } catch (err) {
-    logger.error(err, 'Failed to start worker');
+    logger.error({ err }, 'Worker failed to start');
     process.exit(1);
   }
 })();
-
-module.exports = client;

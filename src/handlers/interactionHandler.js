@@ -1,39 +1,38 @@
-const fs = require('fs').promises;
-const path = require('path');
-const logger = require('../utils/logger');
+import { fileURLToPath } from 'url';
+import path from 'path';
+import fs from 'fs/promises';
+import logger from '../utils/logger.js';
+import { client } from './_sharedClient.js';
 
-module.exports = async (client) => {
-  const interactionsPath = path.join(__dirname, '..', 'interactions');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+async function loadDirIntoCollection(root, collection) {
   try {
-    const files = await fs.readdir(interactionsPath);
-    const jsFiles = files.filter(f => f.endsWith('.js'));
-
-    await Promise.all(jsFiles.map(async file => {
-      const filePath = path.join(interactionsPath, file);
+    const dir = path.join(__dirname, '..', root);
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const files = entries.filter(e => e.isFile() && e.name.endsWith('.js')).map(e => path.join(dir, e.name));
+    await Promise.all(files.map(async full => {
       try {
-        const interaction = require(filePath);
-        if (!interaction || !interaction.name || !interaction.execute) {
-          logger.warn({ file }, 'Interaction file missing expected exports (name, execute)');
+        const mod = await import(full);
+        const h = mod.default || mod;
+        if (!h || !h.id || !h.execute) {
+          logger.warn(`Skipping invalid handler ${full}`);
           return;
         }
-
-        // Example: store interactions in a collection for lookup
-        if (!client.interactions) client.interactions = new Map();
-        client.interactions.set(interaction.name, interaction);
-
-        logger.debug({ file, interaction: interaction.name }, 'Registered interaction');
+        collection.set(h.id, h);
+        logger.info(`Loaded ${root} handler ${h.id}`);
       } catch (err) {
-        logger.error({ file, err }, 'Failed to load interaction file');
-        throw err;
+        logger.error(`Failed to load handler ${full}:`, err);
       }
     }));
-
-    logger.info({ count: jsFiles.length }, 'Loaded interactions');
   } catch (err) {
-    if (err.code === 'ENOENT') {
-      logger.warn('No interactions directory found - skipping interaction loading');
-      return;
-    }
-    throw err;
+    logger.debug(`No ${root} directory found or failed to read it: ${err.message}`);
   }
-};
+}
+
+await Promise.all([
+  loadDirIntoCollection('handlers/buttons', client.buttons),
+  loadDirIntoCollection('handlers/selects', client.selects),
+  loadDirIntoCollection('handlers/modals', client.modals)
+]);

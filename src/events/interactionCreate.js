@@ -1,33 +1,27 @@
 import { InteractionType } from 'discord.js';
 import logger from '../utils/logger.js';
+import { client } from '../handlers/_sharedClient.js';
+import { initCooldownStore } from '../storage/cooldownStore.js';
+
+let cooldownStorePromise = initCooldownStore();
 
 export default {
   name: 'interactionCreate',
-  async execute(client, interaction) {
+  async execute(_, interaction) {
     try {
-      if (interaction.isCommand()) {
+      const cooldownStore = await cooldownStorePromise;
+      if (interaction.isChatInputCommand()) {
         const cmdName = interaction.commandName;
         const command = client.commands.get(cmdName) || client.commands.get(client.commandAliases.get(cmdName));
-        if (!command) {
-          await interaction.reply({ content: 'Unknown command.', ephemeral: true });
-          return;
-        }
-        const cooldown = Number(command.cooldown) || 0;
-        if (cooldown > 0) {
-          const now = Date.now();
-          const timestamps = client.cooldowns.get(command.data.name) || new Map();
-          const userId = interaction.user.id;
-          if (timestamps.has(userId)) {
-            const expiration = timestamps.get(userId) + cooldown * 1000;
-            if (now < expiration) {
-              const remaining = Math.ceil((expiration - now) / 1000);
-              await interaction.reply({ content: `Please wait ${remaining}s before reusing this command.`, ephemeral: true });
-              return;
-            }
+        if (!command) return interaction.reply({ content: 'Unknown command.', ephemeral: true });
+
+        const cd = Number(command.cooldown) || 0;
+        if (cd > 0) {
+          const key = `cd:${cmdName}:${interaction.user.id}`;
+          if (await cooldownStore.has(key)) {
+            return interaction.reply({ content: `You're on cooldown for this command.`, ephemeral: true });
           }
-          timestamps.set(userId, now);
-          client.cooldowns.set(command.data.name, timestamps);
-          setTimeout(() => timestamps.delete(userId), cooldown * 1000).unref();
+          await cooldownStore.set(key, cd);
         }
 
         await command.execute(interaction);
@@ -36,36 +30,25 @@ export default {
 
       if (interaction.isButton()) {
         const customId = interaction.customId;
-        for (const [id, h] of client.buttons) {
-          if (customId.startsWith(id)) {
-            return h.execute(interaction);
-          }
-        }
+        for (const [id, h] of client.buttons) if (customId.startsWith(id)) return h.execute(interaction);
       }
 
-      if (interaction.isSelectMenu()) {
+      if (interaction.isStringSelectMenu()) {
         const customId = interaction.customId;
-        for (const [id, h] of client.selects) {
-          if (customId.startsWith(id)) {
-            return h.execute(interaction);
-          }
-        }
+        for (const [id, h] of client.selects) if (customId.startsWith(id)) return h.execute(interaction);
       }
 
       if (interaction.type === InteractionType.ModalSubmit) {
         const customId = interaction.customId;
-        for (const [id, h] of client.modals) {
-          if (customId.startsWith(id)) {
-            return h.execute(interaction);
-          }
-        }
+        for (const [id, h] of client.modals) if (customId.startsWith(id)) return h.execute(interaction);
       }
     } catch (err) {
-      logger.error('interactionCreate handler error:', err);
-      if (interaction.replied || interaction.deferred) {
-        try { await interaction.followUp({ content: 'There was an error while executing this interaction.', ephemeral: true }); } catch {}
-      } else {
-        try { await interaction.reply({ content: 'There was an error while executing this interaction.', ephemeral: true }); } catch {}
+      logger.error({ err }, 'Error handling interaction');
+      try {
+        if (interaction.replied || interaction.deferred) await interaction.followUp({ content: 'There was an error while executing this interaction.', ephemeral: true });
+        else await interaction.reply({ content: 'There was an error while executing this interaction.', ephemeral: true });
+      } catch (e) {
+        logger.error({ e }, 'Failed to send error reply');
       }
     }
   }

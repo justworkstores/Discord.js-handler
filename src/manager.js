@@ -1,29 +1,32 @@
-const { ShardingManager } = require('discord.js');
-const logger = require('./utils/logger');
+import 'dotenv/config';
+import { ShardingManager } from 'discord.js';
+import { fileURLToPath } from 'url';
+import path from 'path';
+import logger from './utils/logger.js';
 
-const path = require('path');
 const token = process.env.TOKEN;
-
 if (!token) {
-  logger.error('TOKEN environment variable is required to spawn shards.');
+  logger.error('TOKEN env var missing – cannot spawn shards');
   process.exit(1);
 }
 
-const manager = new ShardingManager(path.join(__dirname, 'worker.js'), {
+const workerPath = fileURLToPath(new URL('./worker.js', import.meta.url));
+
+const manager = new ShardingManager(workerPath, {
   token,
-  totalShards: 'auto'
+  totalShards: process.env.TOTAL_SHARDS || 'auto',
+  respawn: true
 });
 
-manager.on('shardCreate', shard => {
-  logger.info({ shard: shard.id }, `Spawned shard ${shard.id}`);
-});
+manager.on('shardCreate', shard => logger.info(`Launched shard ${shard.id}`));
+manager.on('shardError', (shardId, error) => logger.error({ shardId, error }, 'Shard error'));
 
 (async () => {
   try {
     const shards = await manager.spawn();
-    logger.info({ count: shards.length }, 'All shards spawned');
+    logger.info(`Spawned ${shards.size} shards`);
   } catch (err) {
-    logger.error(err, 'Failed to spawn shards');
+    logger.error({ err }, 'Failed to spawn shards');
     process.exit(1);
   }
 })();
