@@ -1,24 +1,27 @@
 {
-  "name": "multipurpose-discord-bot",
+  "name": "discord.js-handler",
   "version": "1.0.0",
-  "private": true,
-  "type": "module",
+  "description": "A lightweight Discord.js handler with optional sharding and improved concurrency.",
+  "main": "src/worker.js",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=16.9.0"
   },
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon --watch src --ext js --exec \"node src/index.js\"",
-    "deploy-commands": "node src/deploy-commands.js"
+    "manager": "node ./src/manager.js",
+    "start:single": "node ./src/worker.js",
+    "test": "echo \"No tests configured\" && exit 0"
   },
+  "keywords": [
+    "discord.js",
+    "handler",
+    "sharding",
+    "pino"
+  ],
+  "author": "justworkstores",
+  "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.0.0",
-    "@discordjs/rest": "^1.0.0",
-    "discord-api-types": "^0.37.0",
-    "mongoose": "^6.0.0",
-    "dotenv": "^16.0.0"
-  },
-  "devDependencies": {
-    "nodemon": "^2.0.0"
+    "discord.js": "^14.11.0",
+    "mongoose": "^7.3.0",
+    "pino": "^8.0.0"
   }
 }

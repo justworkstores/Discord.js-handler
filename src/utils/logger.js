@@ -1,8 +1,19 @@
-export default {
-  info: (...args) => console.log('[INFO]', ...args),
-  warn: (...args) => console.warn('[WARN]', ...args),
-  error: (...args) => console.error('[ERROR]', ...args),
-  debug: (...args) => {
-    if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG]', ...args);
-  }
-};
+const pino = require('pino');
+
+const isDev = process.env.NODE_ENV !== 'production';
+
+let logger;
+if (isDev) {
+  // Simple pretty output in development
+  logger = pino({
+    level: process.env.LOG_LEVEL || 'debug',
+    transport: {
+      target: 'pino-pretty',
+      options: { colorize: true }
+    }
+  });
+} else {
+  logger = pino({ level: process.env.LOG_LEVEL || 'info' });
+}
+
+module.exports = logger;

@@ -1,39 +1,39 @@
-import { fileURLToPath } from 'url';
-import path from 'path';
-import fs from 'fs/promises';
-import logger from '../utils/logger.js';
-import { client } from './_sharedClient.js';
+const fs = require('fs').promises;
+const path = require('path');
+const logger = require('../utils/logger');
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-async function loadDirIntoCollection(root, collection) {
+module.exports = async (client) => {
+  const interactionsPath = path.join(__dirname, '..', 'interactions');
   try {
-    const dir = path.join(__dirname, '..', root);
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    for (const ent of entries) {
-      if (!ent.name.endsWith('.js')) continue;
-      const full = path.join(dir, ent.name);
-      try {
-        const mod = await import(full);
-        const h = mod.default || mod;
-        if (!h || !h.id || !h.execute) {
-          logger.warn(`Skipping invalid handler ${full}`);
-          continue;
-        }
-        collection.set(h.id, h);
-        logger.info(`Loaded ${root} handler ${h.id}`);
-      } catch (err) {
-        logger.error(`Failed to load handler ${full}:`, err);
-      }
-    }
-  } catch (err) {
-    logger.debug(`No ${root} directory found or failed to read it: ${err.message}`);
-  }
-}
+    const files = await fs.readdir(interactionsPath);
+    const jsFiles = files.filter(f => f.endsWith('.js'));
 
-await Promise.all([
-  loadDirIntoCollection('handlers/buttons', client.buttons),
-  loadDirIntoCollection('handlers/selects', client.selects),
-  loadDirIntoCollection('handlers/modals', client.modals)
-]);
+    await Promise.all(jsFiles.map(async file => {
+      const filePath = path.join(interactionsPath, file);
+      try {
+        const interaction = require(filePath);
+        if (!interaction || !interaction.name || !interaction.execute) {
+          logger.warn({ file }, 'Interaction file missing expected exports (name, execute)');
+          return;
+        }
+
+        // Example: store interactions in a collection for lookup
+        if (!client.interactions) client.interactions = new Map();
+        client.interactions.set(interaction.name, interaction);
+
+        logger.debug({ file, interaction: interaction.name }, 'Registered interaction');
+      } catch (err) {
+        logger.error({ file, err }, 'Failed to load interaction file');
+        throw err;
+      }
+    }));
+
+    logger.info({ count: jsFiles.length }, 'Loaded interactions');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      logger.warn('No interactions directory found - skipping interaction loading');
+      return;
+    }
+    throw err;
+  }
+};
