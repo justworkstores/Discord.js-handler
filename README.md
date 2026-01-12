@@ -1,4 +1,4 @@
-# Discord.js Multipurpose Bot — Optimized ESM Handler
+# Discord.js Optimized ESM Handler
 
 A lightweight, production-oriented ESM handler for a multipurpose Discord bot (slash-only) built on discord.js v14. This repository provides a scalable foundation (sharding-ready) and modular handler system so you can focus on implementing features (tickets, moderation, welcome, etc.).
 
@@ -13,6 +13,78 @@ A lightweight, production-oriented ESM handler for a multipurpose Discord bot (s
 - Graceful shutdown and global error handlers
 - Concurrent handler loading for fast startup
 - `deploy-commands.js` script to register slash commands (guild/global)
+- Docker, docker-compose, PM2 ecosystem, health endpoint and CI workflow (branch: `docker/pm2-setup`)
+
+---
+
+## Repository layout
+
+- src/
+  - commands/          — command files (SlashCommandBuilder exports)
+  - events/            — event handlers (name, execute, once?)
+  - handlers/          — component handlers (buttons, selects, modals) and handler loaders
+  - storage/           — cooldown store (Redis or in-memory)
+  - database/          — mongoose connection code
+  - models/            — example mongoose models
+  - manager.js         — Sharding manager (spawns worker.js)
+  - worker.js          — worker process: client, handlers, DB, health server
+  - deploy-commands.js — register slash commands (guild or global)
+  - health.js          — simple HTTP health endpoint
+  - utils/logger.js    — pino logger
+
+---
+
+## Quickstart (local development)
+
+1. Install dependencies
+
+   npm ci
+
+2. Copy `.env.example` → `.env` and fill values (minimum):
+
+   - TOKEN: your bot token (used by manager/worker)
+   - CLIENT_ID: your application id (used by deploy script)
+   - GUILD_ID: optional — use a guild id for fast command registration during development
+   - MONGO_URI: optional but recommended for persistence
+   - REDIS_URL: optional — set to enable shared cooldowns and job queues across shards
+   - NODE_ENV, LOG_LEVEL, TOTAL_SHARDS
+
+3. Deploy commands (recommended to test in a dev guild)
+
+   Set `GUILD_ID` in `.env` for instant propagation, then run:
+
+   node src/deploy-commands.js
+
+   - For global registration, unset `GUILD_ID` (global changes may take up to 1 hour).
+
+4. Start the bot
+
+   - Recommended (production / multiple shards):
+     npm run manager
+
+   - Single worker (development):
+     npm run start
+
+5. Health check
+
+   - The worker exposes a small health server at `/health` on the port defined by `HEALTH_PORT` (default 3000):
+
+     curl http://localhost:3000/health
+
+---
+
+## Handlers and how to add code
+
+Commands
+- Create files under `src/commands/` that export a `data` object (SlashCommandBuilder) and an `execute(interaction)` function.
+- Example structure:
+  ```js
+  export default {
+    data: new SlashCommandBuilder().setName('ping').setDescription('Replies with pong'),
+    cooldown: 5,
+    aliases: ['p'],
+    async execute(interaction) { ... }
+  };- `deploy-commands.js` script to register slash commands (guild/global)
 - Docker, docker-compose, PM2 ecosystem, health endpoint and CI workflow (branch: `docker/pm2-setup`)
 
 ---
